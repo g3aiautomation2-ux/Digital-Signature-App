@@ -771,9 +771,7 @@ if st.button("Sign Uploaded Documents"):
             name_part_full = os.path.splitext(basename)[0]
             match = re.search(r'_(?i:private(_key)?)$', name_part_full)
             if not match or match.start() == 0:
-                st.error("The private key filename must be in the format '[Name]_Private.pem'.
-
-Example: Raksha_Private.pem")
+                st.error("The private key filename must be in the format '[Name]_Private.pem'.\\n\\nExample: Raksha_Private.pem")
             else:
                 name_part = name_part_full[:match.start()]
                 approver_text = f"Approved by {name_part}"
