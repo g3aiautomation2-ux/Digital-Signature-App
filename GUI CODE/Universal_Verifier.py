@@ -1,11 +1,11 @@
-import streamlit as st
+import tkinter as tk
+from tkinter import filedialog, messagebox
 import hashlib
 import base64
 import os
 import re
 import tempfile
 import shutil
-
 # PDF Imports
 import PyPDF2
 
@@ -137,9 +137,10 @@ def sanitize_xlsx(input_path):
 def find_signatures_excel(file_path):
     data = load_spreadsheet_data(file_path)
     signatures = []
-    for sheet_name, rows in data.items():
+    for sheet_name in sorted(data.keys()):
         if sheet_name.lower().endswith("_digitalsign") or sheet_name == "Digital Signature":
-            if len(rows) > 1 and len(rows[1]) > 0:
+            rows = data[sheet_name]
+            if len(rows) >= 2 and len(rows[1]) > 0:
                 sig = rows[1][0]
                 if sig and str(sig).strip() != "":
                     signatures.append(str(sig).strip())
@@ -261,10 +262,6 @@ def verify_signature(hash_value, signature_b64, public_key_text):
         return False
 
 
-# =========================================================
-# STREAMLIT UI & LOGIC
-# =========================================================
-
 def process_single_verify_file(doc_path, public_key_text):
     file_ext = os.path.splitext(doc_path)[1].lower()
     
@@ -275,6 +272,7 @@ def process_single_verify_file(doc_path, public_key_text):
         hash_value = generate_hash_from_pdf(doc_path)
 
     elif file_ext in [".xlsx", ".ods"]:
+        # Need to copy to temp in case it's locked
         with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp:
             with open(doc_path, "rb") as f:
                 tmp.write(f.read())
@@ -311,91 +309,97 @@ def process_single_verify_file(doc_path, public_key_text):
     else:
         return False, -1, "SIGNATURE INVALID (File contents were modified or wrong public key was used.)", len(signatures)
 
-st.set_page_config(page_title="Universal Digital Signature Verifier", page_icon="✅", layout="centered")
 
-st.title("Universal Digital Signature Verifier")
+def verify_document_gui():
+    try:
+        doc_path = filedialog.askopenfilename(
+            title="Select Signed Document File",
+            filetypes=[("Supported Files", "*.pdf;*.xlsx;*.ods"), ("All Files", "*.*")]
+        )
+        if not doc_path:
+            return
 
-uploaded_doc = st.file_uploader("Upload Signed Document (PDF, XLSX, ODS)", type=["pdf", "xlsx", "ods"])
-uploaded_key = st.file_uploader("Upload Public Key (.pem)", type=["pem"])
+        public_key_path = filedialog.askopenfilename(
+            title="Select Public Key",
+            filetypes=[("PEM Files", "*.pem")]
+        )
+        if not public_key_path:
+            return
 
-if st.button("Verify Document"):
-    if not uploaded_doc:
-        st.error("Please upload a signed document.")
-    elif not uploaded_key:
-        st.error("Please upload the public key.")
-    else:
-        try:
-            public_key_text = uploaded_key.read().decode("utf-8")
-            file_ext = os.path.splitext(uploaded_doc.name)[1].lower()
+        with open(public_key_path, "r", encoding="utf-8") as f:
+            public_key_text = f.read()
 
-            with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp:
-                tmp.write(uploaded_doc.read())
-                temp_path = tmp.name
+        valid, verified_index, error_msg, num_signatures = process_single_verify_file(doc_path, public_key_text)
 
-            try:
-                valid, verified_index, error_msg, num_signatures = process_single_verify_file(temp_path, public_key_text)
-                
-                if valid:
-                    if file_ext in [".xlsx", ".ods"] and num_signatures > 1:
-                        st.success(f"✅ **SIGNATURE VALID**\n\nFile is authentic and unchanged.\n\n*(Verified matching signature #{verified_index} of {num_signatures} found in document)*")
+        if valid:
+            if doc_path.lower().endswith((".xlsx", ".ods")) and num_signatures > 1:
+                messagebox.showinfo("Verification Successful", f"SIGNATURE VALID\n\nFile is authentic and unchanged.\n\n*(Verified matching signature #{verified_index} of {num_signatures} found in document)*")
+            else:
+                messagebox.showinfo("Verification Successful", "SIGNATURE VALID\n\nFile is authentic and unchanged.")
+        else:
+            messagebox.showerror("Verification Failed", error_msg)
+
+    except Exception as e:
+        messagebox.showerror("Error", str(e))
+
+def verify_folder_gui():
+    try:
+        folder_path = filedialog.askdirectory(title="Select Folder Containing Documents")
+        if not folder_path:
+            return
+
+        public_key_path = filedialog.askopenfilename(
+            title="Select Public Key",
+            filetypes=[("PEM Files", "*.pem")]
+        )
+        if not public_key_path:
+            return
+
+        with open(public_key_path, "r", encoding="utf-8") as f:
+            public_key_text = f.read()
+            
+        supported_exts = [".pdf", ".xlsx", ".ods"]
+        success_count = 0
+        error_messages = []
+        
+        for filename in os.listdir(folder_path):
+            file_ext = os.path.splitext(filename)[1].lower()
+            if file_ext in supported_exts:
+                doc_path = os.path.join(folder_path, filename)
+                try:
+                    valid, verified_index, error_msg, num_signatures = process_single_verify_file(doc_path, public_key_text)
+                    if valid:
+                        success_count += 1
                     else:
-                        st.success("✅ **SIGNATURE VALID**\n\nFile is authentic and unchanged.")
-                else:
-                    st.error(f"❌ **SIGNATURE INVALID**\n\n{error_msg}")
-                    
-            finally:
-                if os.path.exists(temp_path):
-                    os.remove(temp_path)
+                        error_messages.append(f"{filename}: {error_msg}")
+                except Exception as file_e:
+                    error_messages.append(f"{filename}: {str(file_e)}")
+        
+        if success_count == 0 and not error_messages:
+            messagebox.showinfo("Done", "No supported files (PDF, XLSX, ODS) found in the selected folder.")
+            return
 
-        except Exception as e:
-            st.error(f"Error: {str(e)}")
+        msg = f"Successfully verified {success_count} files as AUTHENTIC."
+        if error_messages:
+            msg += "\n\nFailed verifications:\n" + "\n".join(error_messages[:5])
+            if len(error_messages) > 5:
+                msg += f"\n...and {len(error_messages)-5} more files failed."
+            messagebox.showwarning("Batch Verification Complete with Errors", msg)
+        else:
+            messagebox.showinfo("Verification Successful", msg)
 
-st.divider()
+    except Exception as e:
+        messagebox.showerror("Error", str(e))
 
-st.header("Verify Folder (Batch Process)")
-st.write("Enter the absolute path to a folder on your computer to verify all supported documents inside it.")
 
-folder_path = st.text_input("Folder Path (e.g., C:\\Users\\Name\\Downloads\\Documents)")
-uploaded_batch_key = st.file_uploader("Upload Public Key (.pem) for Batch", type=["pem"], key="batch_key_uploader")
-
-if st.button("Verify All Documents in Folder"):
-    if not folder_path or not os.path.exists(folder_path) or not os.path.isdir(folder_path):
-        st.error("Please enter a valid directory path on your computer.")
-    elif not uploaded_batch_key:
-        st.error("Please upload the public key.")
-    else:
-        try:
-            public_key_text = uploaded_batch_key.read().decode("utf-8")
-            supported_exts = [".pdf", ".xlsx", ".ods"]
-            
-            success_count = 0
-            error_messages = []
-            
-            with st.spinner("Verifying files..."):
-                for filename in os.listdir(folder_path):
-                    file_ext = os.path.splitext(filename)[1].lower()
-                    if file_ext in supported_exts:
-                        doc_path = os.path.join(folder_path, filename)
-                        try:
-                            valid, verified_index, error_msg, num_signatures = process_single_verify_file(doc_path, public_key_text)
-                            if valid:
-                                success_count += 1
-                            else:
-                                error_messages.append(f"{filename}: {error_msg}")
-                        except Exception as file_e:
-                            error_messages.append(f"{filename}: {str(file_e)}")
-            
-            if success_count > 0:
-                st.success(f"Successfully verified {success_count} files as AUTHENTIC.")
-            elif not error_messages:
-                st.info("No supported files (PDF, XLSX, ODS) found in the selected folder.")
-            
-            if error_messages:
-                st.warning("Some files failed verification or encountered errors:")
-                for err in error_messages[:5]:
-                    st.write(f"- {err}")
-                if len(error_messages) > 5:
-                    st.write(f"...and {len(error_messages)-5} more files failed.")
-                    
-        except Exception as e:
-            st.error(f"Batch verification error: {str(e)}")
+# =========================================================
+# GUI
+# =========================================================
+if __name__ == "__main__":
+    root = tk.Tk()
+    root.title("Universal Digital Signature Verifier")
+    root.geometry("500x320")
+    tk.Label(root, text="Universal Digital Signature Verifier", font=("Arial", 16, "bold")).pack(pady=25)
+    tk.Button(root, text="Verify Single Document", width=35, height=2, command=verify_document_gui).pack(pady=10)
+    tk.Button(root, text="Verify Folder (Batch Process)", width=35, height=2, command=verify_folder_gui).pack(pady=10)
+    root.mainloop()

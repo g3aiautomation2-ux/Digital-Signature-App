@@ -35,6 +35,7 @@ from odf import teletype
 # =========================================================
 
 def is_ods_file(file_path):
+    
     return os.path.splitext(str(file_path))[1].lower() == ".ods"
 
 def safe_get_attribute(elem, attr_name):
@@ -222,6 +223,52 @@ def _convert_with_libreoffice(input_path, output_path):
     if not os.path.exists(converted_path):
         raise RuntimeError("LibreOffice conversion did not produce an XLSX file.")
     os.replace(converted_path, output_path)
+
+def sanitize_xlsx(input_path):
+    libreoffice_cmd = _find_libreoffice_command()
+    if not libreoffice_cmd:
+        return False
+        
+    temp_dir = os.path.dirname(input_path)
+    temp_name = "temp_sanitize_input.xlsx"
+    temp_input = os.path.join(temp_dir, temp_name)
+    shutil.copy(input_path, temp_input)
+    
+    command1 = [
+        libreoffice_cmd, "--headless", "--convert-to", "ods",
+        "--outdir", temp_dir, temp_input
+    ]
+    subprocess.run(command1, capture_output=True, text=True, check=False)
+    
+    temp_ods = os.path.join(temp_dir, "temp_sanitize_input.ods")
+    if not os.path.exists(temp_ods):
+        return False
+        
+    command2 = [
+        libreoffice_cmd, "--headless", "--convert-to", "xlsx",
+        "--outdir", temp_dir, temp_ods
+    ]
+    subprocess.run(command2, capture_output=True, text=True, check=False)
+    
+    ret = False
+    temp_xlsx = os.path.join(temp_dir, "temp_sanitize_input.xlsx")
+    if os.path.exists(temp_xlsx):
+        import openpyxl
+        try:
+            wb = openpyxl.load_workbook(temp_xlsx)
+            if len(wb.sheetnames) > 0:
+                shutil.copy(temp_xlsx, input_path)
+                ret = True
+        except Exception:
+            pass
+            
+    # Cleanup temp files
+    for f in [temp_input, temp_ods, temp_xlsx]:
+        if os.path.exists(f):
+            try: os.remove(f)
+            except: pass
+            
+    return ret
 
 def parse_odf_styles(doc):
     styles = {}
@@ -445,14 +492,19 @@ def format_worksheet_layout(ws):
 
 def store_signature_excel(file_path, signature_b64, approver_name):
     wb = load_workbook(file_path)
-    if "Digital Signature" in wb.sheetnames:
-        del wb["Digital Signature"]
-    ws = wb.create_sheet("Digital Signature")
+    sheet_name = f"{approver_name}_digitalsign"
+    
+    if sheet_name in wb.sheetnames:
+        del wb[sheet_name]
+        
+    ws = wb.create_sheet(sheet_name)
+    start_row = 1
+            
     crc_value = hashlib.sha256(signature_b64.encode()).hexdigest()[:16]
-    ws["A1"] = crc_value
-    ws["A2"] = signature_b64
+    ws.cell(row=start_row, column=1, value=crc_value)
+    ws.cell(row=start_row+1, column=1, value=signature_b64)
     current_date = datetime.now().strftime("%d-%m-%Y")
-    ws["A3"] = f"Approved by {approver_name} on {current_date}"
+    ws.cell(row=start_row+2, column=1, value=f"Approved by {approver_name} on {current_date}")
     try:
         format_worksheet_layout(ws)
     except Exception:
@@ -495,6 +547,14 @@ def store_signature_pdf(file_path, signature_b64, approver_text, approver_name):
     except:
         pass
         
+    existing_signatures = 0
+    with open(file_path, "rb") as f:
+        reader = PyPDF2.PdfReader(f)
+        for page in reader.pages:
+            text = page.extract_text()
+            if text and text.strip().startswith("Digital Signature"):
+                existing_signatures += 1
+
     packet = io.BytesIO()
     can = canvas.Canvas(packet, pagesize=letter)
     can.setFont(font_name, 14)
@@ -516,27 +576,29 @@ def store_signature_pdf(file_path, signature_b64, approver_text, approver_name):
     packet.seek(0)
     new_pdf = PyPDF2.PdfReader(packet)
     
+    stamp_y = 750 - (existing_signatures * 55)
     stamp_packet = io.BytesIO()
     stamp_can = canvas.Canvas(stamp_packet, pagesize=letter)
     stamp_can.setStrokeColorRGB(0, 0.6, 0)
     stamp_can.setFillColorRGB(0, 0.6, 0)
     stamp_can.setLineWidth(1.2)
-    stamp_can.roundRect(430, 750, 130, 45, 5)
+    stamp_can.roundRect(430, stamp_y, 130, 45, 5)
     stamp_can.setFont(font_name, 8)
-    stamp_can.drawString(435, 780, f"CRC: {crc_value}")
-    stamp_can.drawString(435, 768, f"Signed by {approver_name} on {current_date}")
-    stamp_can.drawString(435, 756, approver_text)
+    stamp_can.drawString(435, stamp_y + 30, f"CRC: {crc_value}")
+    stamp_can.drawString(435, stamp_y + 18, f"Signed by {approver_name} on {current_date}")
+    stamp_can.drawString(435, stamp_y + 6, approver_text)
     stamp_can.save()
     stamp_packet.seek(0)
     stamp_pdf = PyPDF2.PdfReader(stamp_packet)
     stamp_page = stamp_pdf.pages[0]
     
+    footer_y = 50 - (existing_signatures * 15)
     footer_packet = io.BytesIO()
     footer_can = canvas.Canvas(footer_packet, pagesize=letter)
     footer_can.setFont(font_name, 10)
     footer_can.setFillColorRGB(0.5, 0.5, 0.5)
     footer_text = f"Signed by {approver_name} [{crc_value}]"
-    footer_can.drawCentredString(306, 20, footer_text)
+    footer_can.drawCentredString(306, footer_y, footer_text)
     footer_can.save()
     footer_packet.seek(0)
     footer_pdf = PyPDF2.PdfReader(footer_packet)
@@ -595,6 +657,61 @@ def generate_keys_gui():
     except Exception as e:
         messagebox.showerror("Error", str(e))
 
+def process_single_file(doc_path, private_key, name_part, approver_text):
+    file_ext = os.path.splitext(doc_path)[1].lower()
+    
+    output_dir = os.path.join(os.path.dirname(doc_path), f"Signed_by_{name_part}")
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+        
+    output_filename = os.path.basename(doc_path)
+    
+    if file_ext == ".ods":
+        # We convert ODS to XLSX internally, so the output must have a .xlsx extension
+        output_filename = os.path.splitext(output_filename)[0] + "_Signed.xlsx"
+    elif not output_filename.endswith(f"_Signed{file_ext}"):
+        output_filename = os.path.splitext(output_filename)[0] + f"_Signed{file_ext}"
+        
+    output_path = os.path.join(output_dir, output_filename)
+    
+    if file_ext == ".pdf":
+        shutil.copy(doc_path, output_path)
+        
+        hash_value = generate_hash_from_pdf(output_path)
+        signature_b64 = sign_hash(hash_value, private_key)
+        store_signature_pdf(output_path, signature_b64, approver_text, name_part)
+        return output_path
+        
+    elif file_ext in [".xlsx", ".ods"]:
+        converted_tmp = False
+        working_path = doc_path
+        
+        if file_ext == ".xlsx":
+            from openpyxl import load_workbook
+            wb_test = load_workbook(working_path)
+            if len(wb_test.sheetnames) == 0:
+                sanitize_xlsx(working_path)
+        
+        if file_ext == ".ods":
+            working_path = doc_path + ".converted.xlsx"
+            convert_ods_to_xlsx(doc_path, working_path)
+            converted_tmp = True
+
+        hash_value = generate_hash_from_excel(working_path)
+        signature_b64 = sign_hash(hash_value, private_key)
+        
+        if working_path != output_path:
+            shutil.copy(working_path, output_path)
+        
+        store_signature_excel(output_path, signature_b64, name_part)
+        
+        if converted_tmp and os.path.exists(working_path):
+            os.remove(working_path)
+        return output_path
+    else:
+        raise ValueError("Unsupported file type.")
+
+
 def sign_document_gui():
     try:
         doc_path = filedialog.askopenfilename(
@@ -614,8 +731,6 @@ def sign_document_gui():
         with open(private_key_path, "rb") as f:
             private_key = serialization.load_pem_private_key(f.read(), password=None)
 
-        file_ext = os.path.splitext(doc_path)[1].lower()
-
         # Extract name from private key filename for all document types
         basename = os.path.basename(private_key_path)
         name_part_full = os.path.splitext(basename)[0]
@@ -630,41 +745,70 @@ def sign_document_gui():
         name_part = name_part_full[:match.start()]
         approver_text = f"Approved by {name_part}"
 
-        if file_ext == ".pdf":
-            output_path = doc_path.replace(".pdf", "_Signed.pdf")
-            shutil.copy(doc_path, output_path)
-            
-            hash_value = generate_hash_from_pdf(output_path)
-            signature_b64 = sign_hash(hash_value, private_key)
-            store_signature_pdf(output_path, signature_b64, approver_text, name_part)
-            
-        elif file_ext in [".xlsx", ".ods"]:
-            converted_tmp = False
-            working_path = doc_path
-            
-            if file_ext == ".ods":
-                working_path = doc_path + ".converted.xlsx"
-                convert_ods_to_xlsx(doc_path, working_path)
-                converted_tmp = True
-
-            hash_value = generate_hash_from_excel(working_path)
-            signature_b64 = sign_hash(hash_value, private_key)
-
-            output_name = os.path.splitext(os.path.basename(doc_path))[0] + "_Signed.xlsx"
-            output_path = os.path.join(os.path.dirname(doc_path), output_name)
-            
-            if working_path != output_path:
-                shutil.copy(working_path, output_path)
-            
-            store_signature_excel(output_path, signature_b64, name_part)
-            
-            if converted_tmp and os.path.exists(working_path):
-                os.remove(working_path)
-        else:
-            messagebox.showerror("Error", "Unsupported file type.")
-            return
+        output_path = process_single_file(doc_path, private_key, name_part, approver_text)
 
         messagebox.showinfo("Success", f"Signed file saved:\n\n{output_path}")
+
+    except Exception as e:
+        messagebox.showerror("Error", str(e))
+
+def sign_folder_gui():
+    try:
+        folder_path = filedialog.askdirectory(title="Select Folder Containing Documents")
+        if not folder_path:
+            return
+
+        private_key_path = filedialog.askopenfilename(
+            title="Select Private Key",
+            filetypes=[("PEM Files", "*.pem")]
+        )
+        if not private_key_path:
+            return
+
+        with open(private_key_path, "rb") as f:
+            private_key = serialization.load_pem_private_key(f.read(), password=None)
+
+        basename = os.path.basename(private_key_path)
+        name_part_full = os.path.splitext(basename)[0]
+        match = re.search(r'_(?i:private(_key)?)$', name_part_full)
+        if not match or match.start() == 0:
+            messagebox.showerror(
+                "Invalid Key Format",
+                "The private key filename must be in the format '[Name]_Private.pem'.\n\nExample: Raksha_Private.pem"
+            )
+            return
+            
+        name_part = name_part_full[:match.start()]
+        approver_text = f"Approved by {name_part}"
+        
+        supported_exts = [".pdf", ".xlsx", ".ods"]
+        success_count = 0
+        error_messages = []
+        
+        for filename in os.listdir(folder_path):
+            # We no longer skip _Signed files so that hierarchical sequential batch signing works!
+            
+            file_ext = os.path.splitext(filename)[1].lower()
+            if file_ext in supported_exts:
+                doc_path = os.path.join(folder_path, filename)
+                try:
+                    process_single_file(doc_path, private_key, name_part, approver_text)
+                    success_count += 1
+                except Exception as ex:
+                    error_messages.append(f"{filename}: {str(ex)}")
+        
+        if success_count == 0 and not error_messages:
+            messagebox.showinfo("Done", "No supported files (PDF, XLSX, ODS) found in the selected folder.")
+            return
+
+        msg = f"Successfully signed {success_count} files in the folder."
+        if error_messages:
+            msg += "\n\nErrors encountered:\n" + "\n".join(error_messages[:5])
+            if len(error_messages) > 5:
+                msg += f"\n...and {len(error_messages)-5} more errors."
+            messagebox.showwarning("Batch Complete with Errors", msg)
+        else:
+            messagebox.showinfo("Success", msg)
 
     except Exception as e:
         messagebox.showerror("Error", str(e))
@@ -672,8 +816,9 @@ def sign_document_gui():
 if __name__ == "__main__":
     root = tk.Tk()
     root.title("Universal Digital Signature Generator")
-    root.geometry("500x250")
+    root.geometry("500x320")
     tk.Label(root, text="Universal Digital Signature Generator", font=("Arial", 16, "bold")).pack(pady=20)
     tk.Button(root, text="Generate New Keys", width=30, height=2, command=generate_keys_gui).pack(pady=10)
-    tk.Button(root, text="Sign Document (PDF/XLSX/ODS)", width=30, height=2, command=sign_document_gui).pack(pady=10)
+    tk.Button(root, text="Sign Single Document", width=30, height=2, command=sign_document_gui).pack(pady=10)
+    tk.Button(root, text="Sign Folder (Batch Process)", width=30, height=2, command=sign_folder_gui).pack(pady=10)
     root.mainloop()
