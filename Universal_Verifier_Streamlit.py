@@ -352,50 +352,54 @@ if st.button("Verify Document"):
 
 st.divider()
 
-st.header("Verify Folder (Batch Process)")
-st.write("Enter the absolute path to a folder on your computer to verify all supported documents inside it.")
+st.header("2. Verify Multiple Documents (Batch Process)")
+st.write("Upload multiple supported documents and your public key to verify them all at once.")
 
-folder_path = st.text_input("Folder Path (e.g., C:\\Users\\Name\\Downloads\\Documents)")
-uploaded_batch_key = st.file_uploader("Upload Public Key (.pem) for Batch", type=["pem"], key="batch_key_uploader")
+uploaded_batch_docs = st.file_uploader("Upload Documents to Verify", accept_multiple_files=True, key="batch_verify_doc_uploader")
+uploaded_batch_key = st.file_uploader("Upload Public Key (.pem) for Batch", type=["pem"], key="batch_verify_key_uploader")
 
-if st.button("Verify All Documents in Folder"):
-    if not folder_path or not os.path.exists(folder_path) or not os.path.isdir(folder_path):
-        st.error("Please enter a valid directory path on your computer.")
+if st.button("Verify Uploaded Documents"):
+    if not uploaded_batch_docs:
+        st.error("Please upload at least one document.")
     elif not uploaded_batch_key:
-        st.error("Please upload the public key.")
+        st.error("Please upload your public key.")
     else:
-        try:
-            public_key_text = uploaded_batch_key.read().decode("utf-8")
-            supported_exts = [".pdf", ".xlsx", ".ods"]
-            
-            success_count = 0
-            error_messages = []
-            
-            with st.spinner("Verifying files..."):
-                for filename in os.listdir(folder_path):
-                    file_ext = os.path.splitext(filename)[1].lower()
-                    if file_ext in supported_exts:
-                        doc_path = os.path.join(folder_path, filename)
-                        try:
-                            valid, verified_index, error_msg, num_signatures = process_single_verify_file(doc_path, public_key_text)
-                            if valid:
-                                success_count += 1
-                            else:
-                                error_messages.append(f"{filename}: {error_msg}")
-                        except Exception as file_e:
-                            error_messages.append(f"{filename}: {str(file_e)}")
-            
-            if success_count > 0:
-                st.success(f"Successfully verified {success_count} files as AUTHENTIC.")
-            elif not error_messages:
-                st.info("No supported files (PDF, XLSX, ODS) found in the selected folder.")
-            
+        public_key_text = uploaded_batch_key.read().decode('utf-8')
+        success_count = 0
+        error_messages = []
+        supported_exts = [".pdf", ".xlsx", ".ods"]
+        
+        with st.spinner("Verifying files..."):
+            for uploaded_doc in uploaded_batch_docs:
+                filename = uploaded_doc.name
+                file_ext = os.path.splitext(filename)[1].lower()
+                
+                if file_ext in supported_exts:
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp:
+                        tmp.write(uploaded_doc.read())
+                        temp_path = tmp.name
+                        
+                    try:
+                        valid, verified_index, error_msg, num_signatures = process_single_verify_file(temp_path, public_key_text)
+                        if valid:
+                            success_count += 1
+                        else:
+                            error_messages.append(f"{filename}: {error_msg}")
+                    except Exception as file_e:
+                        error_messages.append(f"{filename}: {str(file_e)}")
+                    finally:
+                        if os.path.exists(temp_path):
+                            os.remove(temp_path)
+                            
+        if success_count > 0:
+            st.success(f"Verification Successful! {success_count} files are authentic and unchanged.")
             if error_messages:
-                st.warning("Some files failed verification or encountered errors:")
-                for err in error_messages[:5]:
-                    st.write(f"- {err}")
-                if len(error_messages) > 5:
-                    st.write(f"...and {len(error_messages)-5} more files failed.")
-                    
-        except Exception as e:
-            st.error(f"Batch verification error: {str(e)}")
+                st.warning("The following files failed verification:")
+                for msg in error_messages:
+                    st.write(msg)
+        elif not error_messages:
+            st.info("No supported files found in the upload.")
+        else:
+            st.error("Verification failed for all files.")
+            for msg in error_messages:
+                st.write(msg)
