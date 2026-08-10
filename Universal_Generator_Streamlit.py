@@ -797,14 +797,28 @@ if st.button("Sign Uploaded Documents"):
                                     temp_path = tmp.name
                                     
                                 try:
-                                    process_single_file(temp_path, private_key, approver_text, name_part)
-                                    
+                                    output_name = filename
+                                    if file_ext == ".pdf":
+                                        hash_value = generate_hash_from_pdf(temp_path)
+                                        signature_b64 = sign_hash(hash_value, private_key)
+                                        store_signature_pdf(temp_path, signature_b64, approver_text, name_part)
+                                    elif file_ext in [".xlsx", ".ods"]:
+                                        working_path = temp_path
+                                        converted_tmp = False
+                                        if file_ext == ".ods":
+                                            working_path = temp_path + ".converted.xlsx"
+                                            convert_ods_to_xlsx(temp_path, working_path)
+                                            converted_tmp = True
+                                        hash_value = generate_hash_from_excel(working_path)
+                                        signature_b64 = sign_hash(hash_value, private_key)
+                                        output_name = os.path.splitext(filename)[0] + ".xlsx"
+                                        store_signature_excel(working_path, signature_b64, name_part)
+                                        if converted_tmp:
+                                            shutil.copy(working_path, temp_path)
+                                            os.remove(working_path)
+                                            
                                     with open(temp_path, "rb") as f:
                                         signed_data = f.read()
-                                        
-                                    output_name = filename
-                                    if file_ext == ".ods":
-                                        output_name = os.path.splitext(filename)[0] + ".xlsx"
                                         
                                     zip_file.writestr(output_name, signed_data)
                                     success_count += 1
