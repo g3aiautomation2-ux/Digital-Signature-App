@@ -654,7 +654,7 @@ def sign_hash(hash_value, private_key):
 # STREAMLIT UI
 # =========================================================
 
-st.set_page_config(page_title="Universal Digital Signature Generator", page_icon="✍️", layout="centered")
+# Removed set_page_config for multipage support
 
 st.title("Universal Digital Signature Generator")
 

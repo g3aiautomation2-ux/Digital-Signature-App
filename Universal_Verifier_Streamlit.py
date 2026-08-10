@@ -311,7 +311,7 @@ def process_single_verify_file(doc_path, public_key_text):
     else:
         return False, -1, "SIGNATURE INVALID (File contents were modified or wrong public key was used.)", len(signatures)
 
-st.set_page_config(page_title="Universal Digital Signature Verifier", page_icon="✅", layout="centered")
+# Removed set_page_config for multipage support
 
 st.title("Universal Digital Signature Verifier")
 
