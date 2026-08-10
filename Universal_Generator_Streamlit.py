@@ -1,4 +1,4 @@
-﻿import streamlit as st
+import streamlit as st
 
 import hashlib
 
@@ -1307,6 +1307,204 @@ def sign_hash(hash_value, private_key):
 # STREAMLIT UI
 
 # =========================================================
+
+import zipfile
+
+st.title("Universal Digital Signature Generator")
+
+# ─────────────────────────────────────────────
+# SECTION 1: Generate Keys
+# ─────────────────────────────────────────────
+st.header("1. Generate New Keys")
+
+if st.button("Generate Key Pair"):
+    try:
+        priv_pem, pub_pem = generate_new_keys()
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zf:
+            zf.writestr("private_key.pem", priv_pem)
+            zf.writestr("public_key.pem", pub_pem)
+        st.success("Keys generated! Download them as a ZIP folder below.")
+        st.download_button("Download Keys (ZIP)", zip_buffer.getvalue(), "keys.zip", mime="application/zip")
+    except Exception as e:
+        st.error(f"Error generating keys: {e}")
+
+st.divider()
+
+# ─────────────────────────────────────────────
+# SECTION 2: Sign Single Document
+# ─────────────────────────────────────────────
+st.header("2. Sign Single Document")
+
+uploaded_doc = st.file_uploader("Upload Document (PDF, XLSX, ODS)", type=["pdf", "xlsx", "ods"], key="single_doc")
+uploaded_key = st.file_uploader("Upload Private Key (.pem)", type=["pem"], key="single_key")
+
+if st.button("Sign Document"):
+    if not uploaded_doc:
+        st.error("Please upload a document.")
+    elif not uploaded_key:
+        st.error("Please upload your private key.")
+    else:
+        try:
+            basename = uploaded_key.name
+            name_part_full = os.path.splitext(basename)[0]
+            match = re.search(r'_(?i:private(_key)?)$', name_part_full)
+            if not match or match.start() == 0:
+                st.error("The private key filename must be in the format '[Name]_Private.pem'.\n\nExample: Raksha_Private.pem")
+            else:
+                name_part = name_part_full[:match.start()]
+                approver_text = f"Approved by {name_part}"
+                private_key = serialization.load_pem_private_key(uploaded_key.read(), password=None)
+                file_ext = os.path.splitext(uploaded_doc.name)[1].lower()
+
+                with st.spinner("Signing document, please wait..."):
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp:
+                        tmp.write(uploaded_doc.read())
+                        temp_path = tmp.name
+
+                    try:
+                        if file_ext == ".pdf":
+                            hash_value = generate_hash_from_pdf(temp_path)
+                            signature_b64 = sign_hash(hash_value, private_key)
+                            store_signature_pdf(temp_path, signature_b64, approver_text, name_part)
+                            output_name = os.path.splitext(uploaded_doc.name)[0] + "_Signed.pdf"
+
+                        elif file_ext in [".xlsx", ".ods"]:
+                            working_path = temp_path
+                            converted_tmp = False
+                            if file_ext == ".xlsx":
+                                wb_test = load_workbook(temp_path)
+                                if len(wb_test.sheetnames) == 0:
+                                    sanitize_xlsx(temp_path)
+                            if file_ext == ".ods":
+                                working_path = temp_path + ".converted.xlsx"
+                                convert_ods_to_xlsx(temp_path, working_path)
+                                converted_tmp = True
+                            hash_value = generate_hash_from_excel(working_path)
+                            signature_b64 = sign_hash(hash_value, private_key)
+                            output_name = os.path.splitext(uploaded_doc.name)[0] + "_Signed.xlsx"
+                            store_signature_excel(working_path, signature_b64, name_part)
+                            if converted_tmp:
+                                shutil.copy(working_path, temp_path)
+                                os.remove(working_path)
+
+                        with open(temp_path, "rb") as f:
+                            final_data = f.read()
+
+                        st.success("Document successfully signed! Download below:")
+                        st.download_button(label=f"Download {output_name}", data=final_data, file_name=output_name)
+                    finally:
+                        if os.path.exists(temp_path):
+                            os.remove(temp_path)
+
+        except Exception as e:
+            st.error(f"Error: {str(e)}")
+
+st.divider()
+
+# ─────────────────────────────────────────────
+# SECTION 3: Sign Multiple Documents (Batch)
+# ─────────────────────────────────────────────
+st.header("3. Sign Multiple Documents (Batch Process)")
+st.write("Upload multiple files (PDF, XLSX, ODS) along with your private key. All signed files will be packaged into a ZIP for download.")
+
+uploaded_batch_docs = st.file_uploader(
+    "Upload Documents to Sign (select multiple files)",
+    type=["pdf", "xlsx", "ods"],
+    accept_multiple_files=True,
+    key="batch_docs"
+)
+uploaded_batch_key = st.file_uploader("Upload Private Key (.pem) for Batch", type=["pem"], key="batch_key")
+
+if st.button("Sign All Uploaded Documents"):
+    if not uploaded_batch_docs:
+        st.error("Please upload at least one document.")
+    elif not uploaded_batch_key:
+        st.error("Please upload your private key.")
+    else:
+        try:
+            basename = uploaded_batch_key.name
+            name_part_full = os.path.splitext(basename)[0]
+            match = re.search(r'_(?i:private(_key)?)$', name_part_full)
+            if not match or match.start() == 0:
+                st.error("The private key filename must be in the format '[Name]_Private.pem'.\n\nExample: Raksha_Private.pem")
+            else:
+                name_part = name_part_full[:match.start()]
+                approver_text = f"Approved by {name_part}"
+                private_key = serialization.load_pem_private_key(uploaded_batch_key.read(), password=None)
+
+                success_count = 0
+                error_messages = []
+                zip_buffer = io.BytesIO()
+
+                with st.spinner(f"Signing {len(uploaded_batch_docs)} file(s), please wait..."):
+                    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+                        for uploaded_doc in uploaded_batch_docs:
+                            filename = uploaded_doc.name
+                            file_ext = os.path.splitext(filename)[1].lower()
+                            temp_path = None
+                            working_path = None
+                            try:
+                                with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp:
+                                    tmp.write(uploaded_doc.read())
+                                    temp_path = tmp.name
+
+                                if file_ext == ".pdf":
+                                    hash_value = generate_hash_from_pdf(temp_path)
+                                    signature_b64 = sign_hash(hash_value, private_key)
+                                    store_signature_pdf(temp_path, signature_b64, approver_text, name_part)
+                                    output_name = os.path.splitext(filename)[0] + "_Signed.pdf"
+                                    with open(temp_path, "rb") as f:
+                                        zf.writestr(output_name, f.read())
+
+                                elif file_ext in [".xlsx", ".ods"]:
+                                    working_path = temp_path
+                                    converted_tmp = False
+                                    if file_ext == ".xlsx":
+                                        wb_test = load_workbook(temp_path)
+                                        if len(wb_test.sheetnames) == 0:
+                                            sanitize_xlsx(temp_path)
+                                    if file_ext == ".ods":
+                                        working_path = temp_path + ".converted.xlsx"
+                                        convert_ods_to_xlsx(temp_path, working_path)
+                                        converted_tmp = True
+                                    hash_value = generate_hash_from_excel(working_path)
+                                    signature_b64 = sign_hash(hash_value, private_key)
+                                    output_name = os.path.splitext(filename)[0] + "_Signed.xlsx"
+                                    store_signature_excel(working_path, signature_b64, name_part)
+                                    with open(working_path, "rb") as f:
+                                        zf.writestr(output_name, f.read())
+                                    if converted_tmp and os.path.exists(working_path):
+                                        os.remove(working_path)
+
+                                success_count += 1
+
+                            except Exception as file_e:
+                                error_messages.append(f"{filename}: {str(file_e)}")
+                            finally:
+                                if temp_path and os.path.exists(temp_path):
+                                    os.remove(temp_path)
+
+                if success_count > 0:
+                    st.success(f"Successfully signed {success_count} of {len(uploaded_batch_docs)} file(s)!")
+                    if error_messages:
+                        st.warning("Some files had errors:")
+                        for msg in error_messages:
+                            st.write(f"- {msg}")
+                    st.download_button(
+                        label=f"Download Signed_by_{name_part}.zip",
+                        data=zip_buffer.getvalue(),
+                        file_name=f"Signed_by_{name_part}.zip",
+                        mime="application/zip"
+                    )
+                else:
+                    st.error("No files could be signed.")
+                    for msg in error_messages:
+                        st.write(f"- {msg}")
+
+        except Exception as e:
+            st.error(f"Batch processing error: {str(e)}")
+
 
 
 
