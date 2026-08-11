@@ -629,72 +629,120 @@ def process_single_verify_file(doc_path, public_key_text):
 
 st.title("Universal Digital Signature Verifier")
 
+# ─────────────────────────────────────────────
+# SECTION 1: Verify Single Document
+# ─────────────────────────────────────────────
+st.header("1. Verify Single Document")
 
+uploaded_doc = st.file_uploader(
+    "Upload Signed Document (PDF, XLSX, ODS)",
+    type=["pdf", "xlsx", "ods"],
+    key="single_verify_doc"
+)
+uploaded_key = st.file_uploader(
+    "Upload Public Key (.pem)",
+    type=["pem"],
+    key="single_verify_key"
+)
 
 if st.button("Verify Document"):
-
     if not uploaded_doc:
-
         st.error("Please upload a signed document.")
-
     elif not uploaded_key:
-
         st.error("Please upload the public key.")
-
     else:
-
         try:
-
             public_key_text = uploaded_key.read().decode("utf-8")
-
             file_ext = os.path.splitext(uploaded_doc.name)[1].lower()
 
+            with st.spinner("Verifying document, please wait..."):
+                with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp:
+                    tmp.write(uploaded_doc.read())
+                    temp_path = tmp.name
 
+                try:
+                    valid, verified_index, error_msg, num_signatures = process_single_verify_file(temp_path, public_key_text)
 
-            with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp:
-
-                tmp.write(uploaded_doc.read())
-
-                temp_path = tmp.name
-
-
-
-            try:
-
-                valid, verified_index, error_msg, num_signatures = process_single_verify_file(temp_path, public_key_text)
-
-                
-
-                if valid:
-
-                    if file_ext in [".xlsx", ".ods"] and num_signatures > 1:
-
-                        st.success(f"Γ£à **SIGNATURE VALID**\n\nFile is authentic and unchanged.\n\n*(Verified matching signature #{verified_index} of {num_signatures} found in document)*")
-
+                    if valid:
+                        if file_ext in [".xlsx", ".ods"] and num_signatures > 1:
+                            st.success(f"SIGNATURE VALID\n\nFile is authentic and unchanged.\n\n(Verified matching signature #{verified_index} of {num_signatures} found in document)")
+                        else:
+                            st.success("SIGNATURE VALID\n\nFile is authentic and unchanged.")
                     else:
-
-                        st.success("Γ£à **SIGNATURE VALID**\n\nFile is authentic and unchanged.")
-
-                else:
-
-                    st.error(f"Γ¥î **SIGNATURE INVALID**\n\n{error_msg}")
-
-                    
-
-            finally:
-
-                if os.path.exists(temp_path):
-
-                    os.remove(temp_path)
-
-
+                        st.error(f"SIGNATURE INVALID\n\n{error_msg}")
+                finally:
+                    if os.path.exists(temp_path):
+                        os.remove(temp_path)
 
         except Exception as e:
-
             st.error(f"Error: {str(e)}")
-
-
 
 st.divider()
 
+# ─────────────────────────────────────────────
+# SECTION 2: Verify Multiple Documents (Batch)
+# ─────────────────────────────────────────────
+st.header("2. Verify Multiple Documents (Batch Process)")
+st.write("Upload multiple signed documents and your public key to verify them all at once.")
+
+uploaded_batch_docs = st.file_uploader(
+    "Upload Signed Documents to Verify (select multiple files)",
+    type=["pdf", "xlsx", "ods"],
+    accept_multiple_files=True,
+    key="batch_verify_docs"
+)
+uploaded_batch_key = st.file_uploader(
+    "Upload Public Key (.pem) for Batch",
+    type=["pem"],
+    key="batch_verify_key"
+)
+
+if st.button("Verify All Uploaded Documents"):
+    if not uploaded_batch_docs:
+        st.error("Please upload at least one document.")
+    elif not uploaded_batch_key:
+        st.error("Please upload the public key.")
+    else:
+        try:
+            public_key_text = uploaded_batch_key.read().decode("utf-8")
+            supported_exts = [".pdf", ".xlsx", ".ods"]
+            success_files = []
+            failed_files = []
+
+            with st.spinner(f"Verifying {len(uploaded_batch_docs)} file(s), please wait..."):
+                for uploaded_doc_batch in uploaded_batch_docs:
+                    filename = uploaded_doc_batch.name
+                    file_ext = os.path.splitext(filename)[1].lower()
+                    if file_ext not in supported_exts:
+                        continue
+                    temp_path = None
+                    try:
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp:
+                            tmp.write(uploaded_doc_batch.read())
+                            temp_path = tmp.name
+                        valid, verified_index, error_msg, num_signatures = process_single_verify_file(temp_path, public_key_text)
+                        if valid:
+                            success_files.append(filename)
+                        else:
+                            failed_files.append(f"{filename}: {error_msg}")
+                    except Exception as file_e:
+                        failed_files.append(f"{filename}: {str(file_e)}")
+                    finally:
+                        if temp_path and os.path.exists(temp_path):
+                            os.remove(temp_path)
+
+            total = len(success_files) + len(failed_files)
+            if success_files:
+                st.success(f"VALID: {len(success_files)} of {total} file(s) are AUTHENTIC and unchanged:")
+                for name in success_files:
+                    st.write(f"  [VALID] {name}")
+            if failed_files:
+                st.error(f"INVALID: {len(failed_files)} of {total} file(s) FAILED verification:")
+                for msg in failed_files:
+                    st.write(f"  [FAILED] {msg}")
+            if not success_files and not failed_files:
+                st.info("No supported files (PDF, XLSX, ODS) found in the upload.")
+
+        except Exception as e:
+            st.error(f"Batch verification error: {str(e)}")
 
