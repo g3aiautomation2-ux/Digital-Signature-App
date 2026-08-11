@@ -626,40 +626,11 @@ if st.button("Generate Key Pair"):
 
 st.divider()
 
-# ── Section 2: Sign Single Document ───────────────────────
-st.header("2. Sign Single Document")
-uploaded_doc = st.file_uploader("Upload Document (PDF, XLSX, ODS)", type=["pdf", "xlsx", "ods"], key="single_doc")
-uploaded_key = st.file_uploader("Upload Private Key (.pem)", type=["pem"], key="single_key")
-
-if st.button("Sign Document"):
-    if not uploaded_doc:
-        st.error("Please upload a document.")
-    elif not uploaded_key:
-        st.error("Please upload your private key.")
-    else:
-        basename = uploaded_key.name
-        name_part_full = os.path.splitext(basename)[0]
-        match = re.search(r'_(?i:private(_key)?)$', name_part_full)
-        if not match or match.start() == 0:
-            st.error("Private key filename must be in the format '[Name]_Private.pem'. Example: Raksha_Private.pem")
-        else:
-            name_part = name_part_full[:match.start()]
-            approver_text = f"Approved by {name_part}"
-            with st.spinner("Signing document, please wait..."):
-                try:
-                    private_key = serialization.load_pem_private_key(uploaded_key.read(), password=None)
-                    file_ext = os.path.splitext(uploaded_doc.name)[1].lower()
-                    signed_bytes, out_ext = sign_file_in_memory(uploaded_doc.read(), file_ext, private_key, approver_text, name_part)
-                    output_name = os.path.splitext(uploaded_doc.name)[0] + "_Signed" + out_ext
-                    st.success("Document signed successfully!")
-                    st.download_button(f"Download {output_name}", signed_bytes, output_name)
-                except Exception as e:
-                    st.error(f"Error: {e}")
-
 st.divider()
 
+
 # ── Section 3: Sign Multiple Documents (Batch) ─────────────
-st.header("3. Sign Multiple Documents (Batch Process)")
+st.header("2. Sign Documents (Single or Multiple)")
 st.write("Upload multiple files and your private key. You will get a ZIP with all signed files.")
 
 uploaded_batch_docs = st.file_uploader(

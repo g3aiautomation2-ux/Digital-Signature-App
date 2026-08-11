@@ -282,52 +282,11 @@ def process_single_verify_file(doc_path, public_key_text):
 st.set_page_config(page_title="Digital Signature Verifier", page_icon="check", layout="centered")
 st.title("Universal Digital Signature Verifier")
 
-# ── Section 1: Verify Single Document ─────────────────────
-st.header("1. Verify Single Document")
-
-uploaded_doc = st.file_uploader(
-    "Upload Signed Document (PDF, XLSX, ODS)",
-    type=["pdf", "xlsx", "ods"],
-    key="single_verify_doc"
-)
-uploaded_pub_key = st.file_uploader(
-    "Upload Public Key (.pem)",
-    type=["pem"],
-    key="single_verify_key"
-)
-
-if st.button("Verify Document"):
-    if not uploaded_doc:
-        st.error("Please upload a signed document.")
-    elif not uploaded_pub_key:
-        st.error("Please upload the public key.")
-    else:
-        with st.spinner("Verifying document, please wait..."):
-            try:
-                public_key_text = uploaded_pub_key.read().decode("utf-8")
-                file_ext = os.path.splitext(uploaded_doc.name)[1].lower()
-                with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp:
-                    tmp.write(uploaded_doc.read())
-                    temp_path = tmp.name
-                try:
-                    valid, verified_index, error_msg, num_signatures = process_single_verify_file(temp_path, public_key_text)
-                    if valid:
-                        if file_ext in [".xlsx", ".ods"] and num_signatures > 1:
-                            st.success(f"SIGNATURE VALID\n\nFile is authentic and unchanged.\n\nVerified signature #{verified_index} of {num_signatures} found in document.")
-                        else:
-                            st.success("SIGNATURE VALID\n\nFile is authentic and unchanged.")
-                    else:
-                        st.error(f"SIGNATURE INVALID\n\n{error_msg}")
-                finally:
-                    if os.path.exists(temp_path):
-                        os.remove(temp_path)
-            except Exception as e:
-                st.error(f"Error: {e}")
-
 st.divider()
 
+
 # ── Section 2: Verify Multiple Documents (Batch) ──────────
-st.header("2. Verify Multiple Documents (Batch Process)")
+st.header("1. Verify Documents (Single or Multiple)")
 st.write("Upload multiple signed documents and your public key to verify them all at once.")
 
 uploaded_batch_docs = st.file_uploader(
