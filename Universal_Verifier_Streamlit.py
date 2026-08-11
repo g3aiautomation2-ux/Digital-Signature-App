@@ -209,11 +209,17 @@ def generate_hash_from_pdf(file_path):
                 text = text.replace("\r", "").replace("\n", " ")
                 if text.strip().startswith("Digital Signature"):
                     continue
+                
                 footer_pattern = r"signed by\s+[^\[\]]{1,30}?\[[a-f0-9]{16}\]"
                 text = re.sub(footer_pattern, "", text, flags=re.IGNORECASE)
+                
                 if i == 0:
-                    pattern = r"CRC:\s*[a-f0-9]{16}\s*Signed by\s+.*?\s+on\s*\d{2}-\d{2}-\d{4}\s*Approved(?: by .*?)?(?=\s*CRC:|$)"
-                    text = re.sub(pattern, "", text, flags=re.IGNORECASE)
+                    pattern = r"CRC:\s*[a-f0-9]{16}\s*Signed by\s+(?:(?!\s*CRC:).)*?\s+on\s*\d{2}-\d{2}-\d{4}\s*Approved(?: by (?:(?!\s*CRC:).)*?)?(?=\s*(?:CRC:|Title:|$))"
+                    prev = None
+                    while text != prev:
+                        prev = text
+                        text = re.sub(pattern, "", text, flags=re.IGNORECASE)
+                        
                 collected.append(f"---PAGE:{i}---")
                 collected.append(text.strip())
     content = "|".join(collected)
