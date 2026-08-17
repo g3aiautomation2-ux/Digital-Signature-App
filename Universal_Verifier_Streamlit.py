@@ -224,6 +224,19 @@ def generate_hash_from_pdf(file_path):
                 if text:
                     collected.append(f"---PAGE:{i}---")
                     collected.append(text)
+                    
+            if '/Resources' in page and '/XObject' in page['/Resources']:
+                try:
+                    xobjects = page['/Resources']['/XObject'].get_object()
+                    for obj_name in sorted(xobjects.keys()):
+                        obj = xobjects[obj_name].get_object()
+                        if obj.get('/Subtype') == '/Image':
+                            img_data = obj._data if hasattr(obj, '_data') else obj.get_data()
+                            img_hash = hashlib.md5(img_data).hexdigest()
+                            collected.append(f"---IMG:{obj_name}:{img_hash}---")
+                except Exception:
+                    pass
+                    
     content = "|".join(collected)
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
