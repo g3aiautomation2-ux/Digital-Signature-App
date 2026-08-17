@@ -146,7 +146,7 @@ def generate_hash_from_excel(file_path):
     data = load_spreadsheet_data(file_path)
     collected = []
     for sheet_name in sorted(data.keys()):
-        if sheet_name == "Digital Signature":
+        if sheet_name.lower().endswith("_digitalsign") or sheet_name == "Digital Signature":
             continue
         rows = data[sheet_name]
         collected.append(f"---SHEET:{sheet_name}---")
@@ -520,15 +520,41 @@ def generate_hash_from_pdf(file_path):
     with open(file_path, "rb") as f:
         reader = PyPDF2.PdfReader(f)
         for i, page in enumerate(reader.pages):
-            collected.append(f"---PAGE:{i}---")
             text = page.extract_text()
             if text:
-                text = text.replace("\r", "")
-                text = text.replace("\n", " ")
-                collected.append(text.strip())
+                text = text.replace("\r", "").replace("\n", " ")
+                if text.strip().startswith("Digital Signature"):
+                    continue
+                
+                footer_pattern = r"signed by\s+[^\[\]]{1,30}?\[[a-f0-9]{16}\]"
+                text = re.sub(footer_pattern, "", text, flags=re.IGNORECASE)
+                
+                if i == 0:
+                    pattern = r"CRC:\s*[a-f0-9]{16}\s*Signed by\s+(?:(?!\s*CRC:).)*?\s+on\s*\d{2}-\d{2}-\d{4}\s*Approved(?: by (?:(?!\s*CRC:).)*?)?(?=\s*(?:CRC:|Title:|$))"
+                    prev = None
+                    while text != prev:
+                        prev = text
+                        text = re.sub(pattern, "", text, flags=re.IGNORECASE)
+                        
+                text = text.strip()
+                if text:
+                    collected.append(f"---PAGE:{i}---")
+                    collected.append(text)
+                    
+            if '/Resources' in page and '/XObject' in page['/Resources']:
+                try:
+                    xobjects = page['/Resources']['/XObject'].get_object()
+                    for obj_name in sorted(xobjects.keys()):
+                        obj = xobjects[obj_name].get_object()
+                        if obj.get('/Subtype') == '/Image':
+                            img_data = obj._data if hasattr(obj, '_data') else obj.get_data()
+                            img_hash = hashlib.md5(img_data).hexdigest()
+                            collected.append(f"---IMG:{obj_name}:{img_hash}---")
+                except Exception:
+                    pass
+                    
     content = "|".join(collected)
-    hash_value = hashlib.sha256(content.encode("utf-8")).hexdigest()
-    return hash_value
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 def store_signature_pdf(file_path, signature_b64, approver_text, approver_name):
     crc_value = hashlib.sha256(signature_b64.encode()).hexdigest()[:16]
@@ -657,6 +683,19 @@ def generate_keys_gui():
     except Exception as e:
         messagebox.showerror("Error", str(e))
 
+def convert_word_to_pdf(input_path, output_dir):
+    lo_cmd = _find_libreoffice_command()
+    if not lo_cmd:
+        raise RuntimeError('LibreOffice is required to convert Word documents to PDF.')
+    command = [lo_cmd, '--headless', '--convert-to', 'pdf', '--outdir', output_dir, input_path]
+    res = subprocess.run(command, capture_output=True, text=True)
+    if res.returncode != 0:
+        raise RuntimeError(f'LibreOffice conversion failed: {res.stderr}')
+    expected_out = os.path.join(output_dir, os.path.splitext(os.path.basename(input_path))[0] + '.pdf')
+    if not os.path.exists(expected_out):
+        raise RuntimeError('Converted PDF file was not found.')
+    return expected_out
+
 def process_single_file(doc_path, private_key, name_part, approver_text):
     file_ext = os.path.splitext(doc_path)[1].lower()
     
@@ -664,7 +703,15 @@ def process_single_file(doc_path, private_key, name_part, approver_text):
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
         
-    output_filename = os.path.basename(doc_path)
+    converted_word_tmp = False
+    working_doc_path = doc_path
+    
+    if file_ext in [".doc", ".docx", ".odt", ".otd"]:
+        working_doc_path = convert_word_to_pdf(doc_path, output_dir)
+        file_ext = ".pdf"
+        converted_word_tmp = True
+
+    output_filename = os.path.basename(working_doc_path)
     
     if file_ext == ".ods":
         # We convert ODS to XLSX internally, so the output must have a .xlsx extension
@@ -675,7 +722,10 @@ def process_single_file(doc_path, private_key, name_part, approver_text):
     output_path = os.path.join(output_dir, output_filename)
     
     if file_ext == ".pdf":
-        shutil.copy(doc_path, output_path)
+        if converted_word_tmp and working_doc_path != output_path:
+            shutil.move(working_doc_path, output_path)
+        elif not converted_word_tmp:
+            shutil.copy(working_doc_path, output_path)
         
         hash_value = generate_hash_from_pdf(output_path)
         signature_b64 = sign_hash(hash_value, private_key)
@@ -716,7 +766,7 @@ def sign_document_gui():
     try:
         doc_path = filedialog.askopenfilename(
             title="Select Document File",
-            filetypes=[("Supported Files", "*.pdf;*.xlsx;*.ods"), ("All Files", "*.*")]
+            filetypes=[("Supported Files", "*.pdf;*.xlsx;*.ods;*.doc;*.docx;*.odt;*.otd"), ("All Files", "*.*")]
         )
         if not doc_path:
             return
@@ -781,7 +831,7 @@ def sign_folder_gui():
         name_part = name_part_full[:match.start()]
         approver_text = f"Approved by {name_part}"
         
-        supported_exts = [".pdf", ".xlsx", ".ods"]
+        supported_exts = [".pdf", ".xlsx", ".ods", ".doc", ".docx", ".odt", ".otd"]
         success_count = 0
         error_messages = []
         
