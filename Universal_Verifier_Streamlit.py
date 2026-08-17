@@ -220,8 +220,10 @@ def generate_hash_from_pdf(file_path):
                         prev = text
                         text = re.sub(pattern, "", text, flags=re.IGNORECASE)
                         
-                collected.append(f"---PAGE:{i}---")
-                collected.append(text.strip())
+                text = text.strip()
+                if text:
+                    collected.append(f"---PAGE:{i}---")
+                    collected.append(text)
     content = "|".join(collected)
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
