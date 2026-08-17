@@ -521,37 +521,49 @@ def store_signature_pdf(file_path, signature_b64, approver_text, approver_name):
     can.save()
     packet.seek(0)
     new_pdf = PyPDF2.PdfReader(packet)
-    stamp_y = 750 - (existing_signatures * 55)
-    stamp_packet = io.BytesIO()
-    stamp_can = canvas.Canvas(stamp_packet, pagesize=letter)
-    stamp_can.setStrokeColorRGB(0, 0.6, 0)
-    stamp_can.setFillColorRGB(0, 0.6, 0)
-    stamp_can.setLineWidth(1.2)
-    stamp_can.roundRect(430, stamp_y, 130, 45, 5)
-    stamp_can.setFont(font_name, 8)
-    stamp_can.drawString(435, stamp_y + 30, f"CRC: {crc_value}")
-    stamp_can.drawString(435, stamp_y + 18, f"Signed by {approver_name} on {current_date}")
-    stamp_can.drawString(435, stamp_y + 6, approver_text)
-    stamp_can.save()
-    stamp_packet.seek(0)
-    stamp_page = PyPDF2.PdfReader(stamp_packet).pages[0]
-    footer_y = 50 - (existing_signatures * 15)
-    footer_packet = io.BytesIO()
-    footer_can = canvas.Canvas(footer_packet, pagesize=letter)
-    footer_can.setFont(font_name, 10)
-    footer_can.setFillColorRGB(0.5, 0.5, 0.5)
-    footer_can.drawCentredString(306, footer_y, f"Signed by {approver_name} [{crc_value}]")
-    footer_can.save()
-    footer_packet.seek(0)
-    footer_page = PyPDF2.PdfReader(footer_packet).pages[0]
     with open(file_path, "rb") as f:
         existing_pdf = PyPDF2.PdfReader(f)
         output = PyPDF2.PdfWriter()
+        
         for i, page in enumerate(existing_pdf.pages):
+            page_width = float(page.mediabox.width)
+            page_height = float(page.mediabox.height)
+            
+            # Dynamic Footer
+            footer_y = 50 - (existing_signatures * 15)
+            footer_x = page_width / 2.0
+            footer_packet = io.BytesIO()
+            footer_can = canvas.Canvas(footer_packet, pagesize=(page_width, page_height))
+            footer_can.setFont(font_name, 10)
+            footer_can.setFillColorRGB(0.5, 0.5, 0.5)
+            footer_can.drawCentredString(footer_x, footer_y, f"Signed by {approver_name} [{crc_value}]")
+            footer_can.save()
+            footer_packet.seek(0)
+            footer_page = PyPDF2.PdfReader(footer_packet).pages[0]
+            
             page.merge_page(footer_page)
+            
+            # Dynamic Stamp (only on first page)
             if i == 0:
+                stamp_y = page_height - 42 - (existing_signatures * 55)
+                stamp_x = page_width - 182
+                stamp_packet = io.BytesIO()
+                stamp_can = canvas.Canvas(stamp_packet, pagesize=(page_width, page_height))
+                stamp_can.setStrokeColorRGB(0, 0.6, 0)
+                stamp_can.setFillColorRGB(0, 0.6, 0)
+                stamp_can.setLineWidth(1.2)
+                stamp_can.roundRect(stamp_x, stamp_y, 130, 45, 5)
+                stamp_can.setFont(font_name, 8)
+                stamp_can.drawString(stamp_x + 5, stamp_y + 30, f"CRC: {crc_value}")
+                stamp_can.drawString(stamp_x + 5, stamp_y + 18, f"Signed by {approver_name} on {current_date}")
+                stamp_can.drawString(stamp_x + 5, stamp_y + 6, approver_text)
+                stamp_can.save()
+                stamp_packet.seek(0)
+                stamp_page = PyPDF2.PdfReader(stamp_packet).pages[0]
                 page.merge_page(stamp_page)
+                
             output.add_page(page)
+            
         output.add_page(new_pdf.pages[0])
         with open(file_path + ".tmp", "wb") as out_stream:
             output.write(out_stream)
