@@ -579,12 +579,32 @@ def sign_hash(hash_value, private_key):
     signature = private_key.sign(hash_value.encode(), padding.PKCS1v15(), hashes.SHA256())
     return base64.b64encode(signature).decode()
 
+def _convert_word_to_pdf(input_path, output_dir):
+    lo_cmd = _find_libreoffice_command()
+    if not lo_cmd:
+        raise RuntimeError("LibreOffice is required to convert Word documents to PDF.")
+    command = [lo_cmd, '--headless', '--convert-to', 'pdf', '--outdir', output_dir, input_path]
+    res = subprocess.run(command, capture_output=True, text=True)
+    if res.returncode != 0:
+        raise RuntimeError(f"LibreOffice conversion failed: {res.stderr}")
+    expected_out = os.path.join(output_dir, os.path.splitext(os.path.basename(input_path))[0] + '.pdf')
+    if not os.path.exists(expected_out):
+        raise RuntimeError("Converted PDF file was not found.")
+    return expected_out
+
 def sign_file_in_memory(file_bytes, file_ext, private_key, approver_text, name_part):
     """Signs a file (given as bytes) and returns the signed file bytes and output extension."""
     with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp:
         tmp.write(file_bytes)
         temp_path = tmp.name
     try:
+        if file_ext in [".doc", ".docx", ".odt", ".otd"]:
+            output_dir = os.path.dirname(temp_path)
+            converted_path = _convert_word_to_pdf(temp_path, output_dir)
+            os.remove(temp_path)
+            temp_path = converted_path
+            file_ext = ".pdf"
+
         if file_ext == ".pdf":
             hash_value = generate_hash_from_pdf(temp_path)
             signature_b64 = sign_hash(hash_value, private_key)
@@ -648,7 +668,7 @@ st.write("Upload multiple files and your private key. You will get a ZIP with al
 
 uploaded_batch_docs = st.file_uploader(
     "Upload Documents to Sign (select multiple)",
-    type=["pdf", "xlsx", "ods"],
+    type=["pdf", "xlsx", "ods", "doc", "docx", "odt", "otd"],
     accept_multiple_files=True,
     key="batch_docs"
 )
