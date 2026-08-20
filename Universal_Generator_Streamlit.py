@@ -473,11 +473,18 @@ def generate_hash_from_pdf(file_path):
                 text = re.sub(footer_pattern, "", text, flags=re.IGNORECASE)
                 
                 if i == 0:
-                    pattern = r"CRC:\s*[a-f0-9]{16}\s*Signed by\s+(?:(?!\s*CRC:).)*?\s+on\s*\d{2}-\d{2}-\d{4}\s*Approved(?: by (?:(?!\s*CRC:).)*?)?(?=\s*(?:CRC:|Title:|$))"
+                    pattern1 = r"CRC:\s*[a-f0-9]{16}\s*Signed by\s+(?:(?!\s*CRC:).)*?\s+on\s*\d{2}-\d{2}-\d{4}\s*Approved(?: by (?:(?!\s*CRC:).)*?)?(?=\s*(?:CRC:|Title:|$))"
+                    pattern2 = r"crc:\s*[a-f0-9]{16}\s*Approved by\s+(?:(?!\s*crc:).)*?\s+on\s*\d{2}-\d{2}-\d{4}"
+                    
                     prev = None
                     while text != prev:
                         prev = text
-                        text = re.sub(pattern, "", text, flags=re.IGNORECASE)
+                        text = re.sub(pattern1, "", text, flags=re.IGNORECASE)
+                        
+                    prev = None
+                    while text != prev:
+                        prev = text
+                        text = re.sub(pattern2, "", text, flags=re.IGNORECASE)
                         
                 text = text.strip()
                 if text:
@@ -567,11 +574,10 @@ def store_signature_pdf(file_path, signature_b64, approver_text, approver_name):
                 stamp_can.setStrokeColorRGB(0, 0.6, 0)
                 stamp_can.setFillColorRGB(0, 0.6, 0)
                 stamp_can.setLineWidth(1.2)
-                stamp_can.roundRect(stamp_x, stamp_y, 130, 45, 5)
+                stamp_can.roundRect(stamp_x, stamp_y + 10, 130, 35, 5)
                 stamp_can.setFont(font_name, 8)
-                stamp_can.drawString(stamp_x + 5, stamp_y + 30, f"CRC: {crc_value}")
-                stamp_can.drawString(stamp_x + 5, stamp_y + 18, f"Signed by {approver_name} on {current_date}")
-                stamp_can.drawString(stamp_x + 5, stamp_y + 6, approver_text)
+                stamp_can.drawString(stamp_x + 5, stamp_y + 32, f"crc: {crc_value}")
+                stamp_can.drawString(stamp_x + 5, stamp_y + 20, f"Approved by {approver_name} on {current_date}")
                 stamp_can.save()
                 stamp_packet.seek(0)
                 stamp_page = PyPDF2.PdfReader(stamp_packet).pages[0]

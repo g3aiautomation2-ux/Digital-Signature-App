@@ -214,11 +214,18 @@ def generate_hash_from_pdf(file_path):
                 text = re.sub(footer_pattern, "", text, flags=re.IGNORECASE)
                 
                 if i == 0:
-                    pattern = r"CRC:\s*[a-f0-9]{16}\s*Signed by\s+(?:(?!\s*CRC:).)*?\s+on\s*\d{2}-\d{2}-\d{4}\s*Approved(?: by (?:(?!\s*CRC:).)*?)?(?=\s*(?:CRC:|Title:|$))"
+                    pattern1 = r"CRC:\s*[a-f0-9]{16}\s*Signed by\s+(?:(?!\s*CRC:).)*?\s+on\s*\d{2}-\d{2}-\d{4}\s*Approved(?: by (?:(?!\s*CRC:).)*?)?(?=\s*(?:CRC:|Title:|$))"
+                    pattern2 = r"crc:\s*[a-f0-9]{16}\s*Approved by\s+(?:(?!\s*crc:).)*?\s+on\s*\d{2}-\d{2}-\d{4}"
+                    
                     prev = None
                     while text != prev:
                         prev = text
-                        text = re.sub(pattern, "", text, flags=re.IGNORECASE)
+                        text = re.sub(pattern1, "", text, flags=re.IGNORECASE)
+                        
+                    prev = None
+                    while text != prev:
+                        prev = text
+                        text = re.sub(pattern2, "", text, flags=re.IGNORECASE)
                         
                 text = text.strip()
                 if text:
